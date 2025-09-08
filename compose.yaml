@@ -1,0 +1,18 @@
+﻿services:
+  blazorwebappwithai:
+    image: blazorwebappwithai
+    build:
+      context: .
+      dockerfile: BlazorWebAppWithAi/Dockerfile
+  ollama:
+    build:
+      context: .
+      dockerfile: BlazorWebAppWithAi/Ollama.Dockerfile
+    container_name: ollama
+    ports:
+      - "11434:8080"  # public access is via proxy
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+volumes:
+  ollama-data:
