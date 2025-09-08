@@ -1,19 +1,22 @@
-# ./ollama-entrypoint.sh
+#!/bin/sh
+set -eu
+
 # clear ready flag
 rm -f /tmp/ready
 
+# start ollama
 ollama serve &
 
-# start ollama, wait for it to serve
+# wait for it to serve
 echo "Starting Ollama..."
 until curl -s http://localhost:11434 > /dev/null; do
   sleep 1
 done
 
-# all the models to install
-MODELS="ollama run gemma3:1b"
+# models to install
+MODELS="gemma3:1b"
 
-# pull and install models, or skip if they're present
+# pull and install models, or skip if present
 for MODEL in $MODELS; do
   if ! ollama list | grep -q "$MODEL"; then
     echo "⚡️ Pulling model: $MODEL"
@@ -26,5 +29,5 @@ done
 # set container as ready
 touch /tmp/ready
 
-# start nginx
-nginx -g "daemon off;"
+# start nginx in foreground (PID 1)
+exec nginx -g "daemon off;"

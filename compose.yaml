@@ -4,11 +4,11 @@
     build:
       context: .
       dockerfile: BlazorWebAppWithAi/Dockerfile
-  ollama:
+  ollama_blazor:
     build:
       context: .
       dockerfile: BlazorWebAppWithAi/Ollama.Dockerfile
-    container_name: ollama
+    container_name: ollama_blazor
     ports:
       - "11434:8080"  # public access is via proxy
     volumes:
