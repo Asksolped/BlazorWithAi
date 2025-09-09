@@ -1,11 +1,10 @@
 @page "/ChatInput"
 @using System.Text
 @using System.Text.Json
-@using System.Text.Json.Serialization
+@using BlazorWebAppWithAi.Models.Ollama
 @inject IHttpClientFactory ClientFactory;
 
 <h3>ChatInput</h3>
-<p>@_success</p>
 <EditForm FormName="ChatPrompt" Model="@_formData" OnSubmit="@HandleValidSubmit">
     <label for="prompt">Type your prompt...</label>
     <InputText id="prompt" @bind-Value="_formData.Prompt" type="text"></InputText>
@@ -14,51 +13,16 @@
 
 <p>Ollama Response: @_ollamaResponse</p>
 @code {
-    private OllamaChatParameters _formData = new();
-    private bool _success = false;
+    private readonly OllamaRequest _formData = new();
     private string _ollamaResponse = string.Empty;
-    private async Task Load()
-    {
-        var client = ClientFactory.CreateClient();
-        var response = await client.GetAsync("https://example.com");
-        _success = response.IsSuccessStatusCode;
-    }
 
     private async Task HandleValidSubmit()
     {
-
         var client = ClientFactory.CreateClient();
         var content = new StringContent(JsonSerializer.Serialize(_formData), Encoding.UTF8, "application/json");
         var response = await client.PostAsync(new Uri("http://localhost:11434/api/generate"), content);
         var chatResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>();
+        if (chatResponse is null) return;
         _ollamaResponse = chatResponse.Response;
-    }
-    
-    public class OllamaChatParameters
-    {
-        [JsonPropertyName("model")]
-        public string Model { get; set; } = "gemma3:1b";
-        [JsonPropertyName("prompt")]
-        public string Prompt { get; set; } = string.Empty;
-        [JsonPropertyName("stream")]
-        public bool Stream { get; set; } = false;
-    }
-
-    public class OllamaResponse
-    {
-        [JsonPropertyName("model")]
-        public string Model { get; set; }
-        [JsonPropertyName("created_at")]
-        public DateTime CreatedAt { get; set; }
-        [JsonPropertyName("response")]
-        public string Response { get; set; }
-        [JsonPropertyName("done")]
-        public bool Done { get; set; }
-    }
-
-    protected override async Task OnInitializedAsync()
-    {
-        await base.OnInitializedAsync();
-        await Load();
     }
 }
