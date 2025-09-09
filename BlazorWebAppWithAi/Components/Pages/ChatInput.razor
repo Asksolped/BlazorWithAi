@@ -1,11 +1,15 @@
 @page "/ChatInput"
+@rendermode InteractiveServer
 @using System.Text
 @using System.Text.Json
+@using BlazorBootstrap
 @using BlazorWebAppWithAi.Models.Ollama
-@using Mono.TextTemplating
 @inject IHttpClientFactory ClientFactory;
 
 <h3>ChatInput</h3>
+<AuthorizeView>
+    <p>Hello @context.User.Identity?.Name</p>
+</AuthorizeView>
 <EditForm FormName="ChatPrompt" Model="@_formData" OnSubmit="@HandleValidSubmit">
     <label for="prompt">Type your prompt...</label>
     <InputText id="prompt" @bind-Value="_formData.Prompt" type="text"></InputText>
@@ -14,7 +18,22 @@
     <button type="submit">Submit Prompt</button>
 </EditForm>
 
-<p>Ollama Response: @_ollamaResponse</p>
+@*
+    Det viser seg at tekstresponsen fra Gemma3, er trent opp på å returnere teksten som markdown format.
+Det kan vi bruke for å ferdigformatere teksten vi tar imot. Markdown er et standardisert tekstformat, også brukt av Discord.
+Vi kan enten lage en parser for dette selv, eller ta i bruk komponentpakker. De som jobber i front-end er vandt med dette.
+Her har jeg tatt i bruk en nuget pakke som heter Blazor.Bootstrap, Les mer og test de forskjellige komponentene tilgjengelig i pakken her:
+
+https://demos.blazorbootstrap.com/
+
+Vi tar i bruk Markdown komponenten her for å ferdigrendre ut ollama responsen vår, fra markdown til html.
+Når dere laster ned denne nye oppdateringen kan dere kjøre
+
+dotnet restore
+
+for å hente inn de nye pakkene.
+*@
+<p>Response: </p><Markdown>@_ollamaResponse</Markdown>
 @code {
     private readonly OllamaRequest _formData = new();
     private string _ollamaResponse = string.Empty;
