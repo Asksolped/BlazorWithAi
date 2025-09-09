@@ -2,12 +2,15 @@
 @using System.Text
 @using System.Text.Json
 @using BlazorWebAppWithAi.Models.Ollama
+@using Mono.TextTemplating
 @inject IHttpClientFactory ClientFactory;
 
 <h3>ChatInput</h3>
 <EditForm FormName="ChatPrompt" Model="@_formData" OnSubmit="@HandleValidSubmit">
     <label for="prompt">Type your prompt...</label>
     <InputText id="prompt" @bind-Value="_formData.Prompt" type="text"></InputText>
+    <label for="stream"> Enable Stream</label>
+    <InputCheckbox id="stream" @bind-Value="_formData.Stream"></InputCheckbox>
     <button type="submit">Submit Prompt</button>
 </EditForm>
 
@@ -18,11 +21,35 @@
 
     private async Task HandleValidSubmit()
     {
+        _ollamaResponse = string.Empty;
         var client = ClientFactory.CreateClient();
         var content = new StringContent(JsonSerializer.Serialize(_formData), Encoding.UTF8, "application/json");
-        var response = await client.PostAsync(new Uri("http://localhost:11434/api/generate"), content);
-        var chatResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>();
-        if (chatResponse is null) return;
-        _ollamaResponse = chatResponse.Response;
+        Console.WriteLine(await content.ReadAsStringAsync());
+        var url = new Uri("http://localhost:11434/api/generate");
+        if (_formData.Stream)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = content
+            };
+            var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            using var reader = new StreamReader(stream);
+            while (!reader.EndOfStream)
+            {
+                var line = await reader.ReadLineAsync();
+                var streamReq = JsonSerializer.Deserialize<OllamaResponse>(line);
+                if (streamReq.Done) break;
+                _ollamaResponse += streamReq.Response;
+                StateHasChanged();
+            }
+        }
+        else
+        {
+            var response = await client.PostAsync(url, content);
+            var chatResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>();
+            if (chatResponse is null) return;
+            _ollamaResponse = chatResponse.Response;
+        }
     }
 }
