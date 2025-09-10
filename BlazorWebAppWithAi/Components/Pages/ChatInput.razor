@@ -1,22 +1,45 @@
 @page "/ChatInput"
 @rendermode InteractiveServer
+@using System.Data
 @using System.Text
 @using System.Text.Json
 @using BlazorBootstrap
+@using BlazorWebAppWithAi.Data
 @using BlazorWebAppWithAi.Models.Ollama
+@using Microsoft.EntityFrameworkCore
 @inject IHttpClientFactory ClientFactory;
+@inject ApplicationDbContext DbContext;
+@inject AuthenticationStateProvider AuthProvider;
 
 <h3>ChatInput</h3>
-<AuthorizeView>
-    <p>Hello @context.User.Identity?.Name</p>
+<AuthorizeView Context="authContext">
+    <Authorized>
+        <p>Hello @authContext.User.Identity?.Name</p>
+        <br/>
+        @foreach (var chat in _chatHistory)
+        {
+            <Markdown> @chat.Prompt.Content </Markdown>
+            <Markdown Style="text-align: end"> @chat.Response.Content </Markdown>
+        }
+        <Markdown>@_currentPrompt</Markdown>
+        <Markdown Style="text-align: end;">@_currentResponse</Markdown>
+        <br/>
+        <EditForm FormName="ChatPrompt" Model="@_formData" OnSubmit="@HandleValidSubmit" Context="formContent">
+            <label for="prompt">Type your prompt...</label>
+            <InputText id="prompt" @bind-Value="_formData.Prompt" type="text"></InputText>
+            <label for="stream"> Enable Stream</label>
+            <InputCheckbox id="stream" @bind-Value="_formData.Stream"></InputCheckbox>
+            <label for="chathistory">Include Chat History</label>
+            <InputCheckbox id="chathistory" @bind-Value="_includeChatHistory"></InputCheckbox>
+            <button type="submit">Submit Prompt</button>
+        </EditForm>
+
+    </Authorized>
+    <NotAuthorized>
+        <p>Please log in to chat</p>
+    </NotAuthorized>
 </AuthorizeView>
-<EditForm FormName="ChatPrompt" Model="@_formData" OnSubmit="@HandleValidSubmit">
-    <label for="prompt">Type your prompt...</label>
-    <InputText id="prompt" @bind-Value="_formData.Prompt" type="text"></InputText>
-    <label for="stream"> Enable Stream</label>
-    <InputCheckbox id="stream" @bind-Value="_formData.Stream"></InputCheckbox>
-    <button type="submit">Submit Prompt</button>
-</EditForm>
+
 
 @*
     Det viser seg at tekstresponsen fra Gemma3, er trent opp på å returnere teksten som markdown format.
@@ -33,17 +56,46 @@ dotnet restore
 
 for å hente inn de nye pakkene.
 *@
-<p>Response: </p><Markdown>@_ollamaResponse</Markdown>
+
 @code {
     private readonly OllamaRequest _formData = new();
-    private string _ollamaResponse = string.Empty;
+    private string _chatId = string.Empty;
+    private List<Chat> _chatHistory = [];
+    private string _currentPrompt { get; set; }
+    private string _currentResponse { get; set; }
+    private Prompt _prompt { get; set; } = new();
+    private Response _response { get; set; } = new();
+    private ApplicationUser _currentUser { get; set; }
+    private bool _includeChatHistory { get; set; }
 
     private async Task HandleValidSubmit()
     {
-        _ollamaResponse = string.Empty;
+        var chat = new Chat
+        {
+            ChatId = _chatId
+        };
+        _prompt = new Prompt
+        {
+            Content = _formData.Prompt,
+            User = _currentUser,
+            Chat = chat,
+            CreatedAt = DateTime.UtcNow
+        };
+        _response = new Response
+        {
+            ModelName = _formData.Model,
+            CreatedAt = DateTime.UtcNow,
+            Chat = chat
+        };
+        chat.Prompt = _prompt;
+        chat.Response = _response;
+        _currentPrompt = _formData.Prompt;
+        StateHasChanged();
         var client = ClientFactory.CreateClient();
+        var currentContext = _chatHistory.Select(c => c.Response.Context).LastOrDefault();
+        if (currentContext is not null) _formData.Context = currentContext;
+        if (_includeChatHistory) _formData.Prompt = GenerateChatHistoryForPrompt(_chatHistory) + "Newest prompt: " + _formData.Prompt;
         var content = new StringContent(JsonSerializer.Serialize(_formData), Encoding.UTF8, "application/json");
-        Console.WriteLine(await content.ReadAsStringAsync());
         var url = new Uri("http://localhost:11434/api/generate");
         if (_formData.Stream)
         {
@@ -58,8 +110,13 @@ for å hente inn de nye pakkene.
             {
                 var line = await reader.ReadLineAsync();
                 var streamReq = JsonSerializer.Deserialize<OllamaResponse>(line);
-                if (streamReq.Done) break;
-                _ollamaResponse += streamReq.Response;
+                if (streamReq.Done)
+                {
+                    if (streamReq.Context is not null) _response.Context = streamReq.Context;
+                    break;
+                }
+                _response.Content += streamReq.Response;
+                _currentResponse += streamReq.Response;
                 StateHasChanged();
             }
         }
@@ -68,7 +125,55 @@ for å hente inn de nye pakkene.
             var response = await client.PostAsync(url, content);
             var chatResponse = await response.Content.ReadFromJsonAsync<OllamaResponse>();
             if (chatResponse is null) return;
-            _ollamaResponse = chatResponse.Response;
+            _response.Content = chatResponse.Response;
+            _currentResponse = chatResponse.Response;
+            if (chatResponse.Context is not null) _response.Context = chatResponse.Context;
         }
+
+        _chatHistory.Add(chat);
+        _currentResponse = string.Empty;
+        _currentPrompt = string.Empty;
+        await DbContext.Chats.AddAsync(chat);
+        await DbContext.Responses.AddAsync(_response);
+        await DbContext.Prompts.AddAsync(_prompt);
+        await DbContext.SaveChangesAsync();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        if (user.Identity is not null && user.Identity.IsAuthenticated)
+        {
+            _currentUser = await DbContext.Users.FirstOrDefaultAsync(u => u.Email == user.Identity.Name) ?? throw new DataException("Somehow There's a mismatch in Authentication Context and Authentication Data store.");
+            Console.WriteLine("User Found!");
+            _chatHistory = await DbContext.Chats
+                .Include(c => c.Prompt)
+                .Include(c => c.Response)
+                .Where(c => c.Prompt.UserId == _currentUser.Id && c.Response.ModelName == _formData.Model)
+                .ToListAsync();
+            _chatId = _chatHistory.Select(c => c.ChatId).FirstOrDefault() ?? new Guid().ToString();
+        }
+    }
+
+    private string GenerateChatHistoryForPrompt(List<Chat> chatHistory, int lengthLimit = 30_000)
+    {
+        var builder = new StringBuilder();
+        builder.Append($"Our chat history: ");
+        for (var i = chatHistory.Count - 1; i >= 0; i--)
+        {
+            var currentResponse = chatHistory[i].Response.Content;
+            var currentPrompt = _chatHistory[i].Prompt.Content;
+            if (builder.Length + currentResponse.Length + currentPrompt.Length <= lengthLimit)
+            {
+                builder.Append($"Prompt: {currentPrompt}, Your response: {currentResponse}");
+            }
+            else
+            {
+                break;
+            }
+        }
+        return builder.ToString();
     }
 }

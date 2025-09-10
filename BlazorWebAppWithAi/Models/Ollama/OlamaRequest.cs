@@ -10,4 +10,5 @@ public class OllamaRequest
     public string Prompt { get; set; } = string.Empty;
     [JsonPropertyName("stream")]
     public bool Stream { get; set; } = false;
+    public int[]? Context { get; set; }
 }
